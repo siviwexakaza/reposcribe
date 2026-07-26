@@ -1,0 +1,39 @@
+[workspace]
+members = [
+    "crates/reposcribe-ai",
+    "crates/reposcribe-analyzers",
+    "crates/reposcribe-cli",
+    "crates/reposcribe-core",
+    "crates/reposcribe-render",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+authors = ["RepoScribe contributors"]
+
+[workspace.dependencies]
+blake3 = "1.8"
+clap = { version = "4.5", features = ["derive"] }
+console = "0.16"
+directories = "6.0"
+ignore = "0.4"
+indicatif = "0.18"
+inquire = "0.9"
+miette = { version = "7.6", features = ["fancy"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+secrecy = "0.10"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+svg2pdf = "0.13"
+tempfile = "3.23"
+thiserror = "2.0"
+tokio = { version = "1.48", features = ["macros", "rt-multi-thread"] }
+toml = "0.9"
+wiremock = "0.6"
+
+[profile.release]
+lto = "thin"
+strip = true

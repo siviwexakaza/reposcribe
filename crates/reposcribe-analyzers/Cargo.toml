@@ -1,0 +1,17 @@
+[package]
+name = "reposcribe-analyzers"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+blake3.workspace = true
+ignore.workspace = true
+reposcribe-core = { path = "../reposcribe-core" }
+serde_json.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+

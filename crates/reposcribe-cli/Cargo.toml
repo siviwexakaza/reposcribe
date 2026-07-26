@@ -1,0 +1,26 @@
+[package]
+name = "reposcribe-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "reposcribe"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+console.workspace = true
+indicatif.workspace = true
+inquire.workspace = true
+miette.workspace = true
+reposcribe-ai = { path = "../reposcribe-ai" }
+reposcribe-analyzers = { path = "../reposcribe-analyzers" }
+reposcribe-core = { path = "../reposcribe-core" }
+reposcribe-render = { path = "../reposcribe-render" }
+tokio.workspace = true
+
+[dev-dependencies]
+assert_cmd = "2.1"
+predicates = "3.1"
+tempfile.workspace = true

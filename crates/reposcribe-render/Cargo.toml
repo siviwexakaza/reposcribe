@@ -1,0 +1,13 @@
+[package]
+name = "reposcribe-render"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+reposcribe-core = { path = "../reposcribe-core" }
+svg2pdf.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
