@@ -100,19 +100,23 @@ pub fn load_or_detect_project(
     let fresh_profile = profile_from_markers(repository_root, &markers);
     let cache_path = cache_path(repository_root);
 
-    if !force_refresh
-        && let Ok(path) = &cache_path
-        && let Ok(bytes) = fs::read(path)
-        && let Ok(cached) = serde_json::from_slice::<ProjectProfile>(&bytes)
-        && cached.schema_version == SCHEMA_VERSION
-        && cached.detector_version == DETECTOR_VERSION
-        && cached.fingerprint == fresh_profile.fingerprint
-    {
-        return Ok(ProjectProfileOutcome {
-            profile: cached,
-            cache_state: CacheState::Hit,
-            warning: None,
-        });
+    if !force_refresh {
+        if let Ok(path) = &cache_path {
+            if let Ok(bytes) = fs::read(path) {
+                if let Ok(cached) = serde_json::from_slice::<ProjectProfile>(&bytes) {
+                    if cached.schema_version == SCHEMA_VERSION
+                        && cached.detector_version == DETECTOR_VERSION
+                        && cached.fingerprint == fresh_profile.fingerprint
+                    {
+                        return Ok(ProjectProfileOutcome {
+                            profile: cached,
+                            cache_state: CacheState::Hit,
+                            warning: None,
+                        });
+                    }
+                }
+            }
+        }
     }
 
     let cache_write = cache_path
@@ -319,13 +323,14 @@ fn apply_marker(module: &mut ModuleBuilder, marker: &Marker) {
         }
         MarkerKind::Cargo => {
             module.languages.insert(Language::Rust);
-            if let Ok(document) = toml::from_str::<toml::Value>(&text)
-                && let Some(name) = document
+            if let Ok(document) = toml::from_str::<toml::Value>(&text) {
+                if let Some(name) = document
                     .get("package")
                     .and_then(|package| package.get("name"))
                     .and_then(toml::Value::as_str)
-            {
-                module.name = Some(name.to_owned());
+                {
+                    module.name = Some(name.to_owned());
+                }
             }
         }
         MarkerKind::PyProject => {

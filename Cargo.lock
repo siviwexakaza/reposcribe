@@ -1279,6 +1279,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mermaid-svg"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fdc883b00c6f9e6f385aa38e34f6d923c53ff141124cfdbe03e69b9513d0e44f"
+dependencies = [
+ "thiserror",
+]
+
+[[package]]
 name = "miette"
 version = "7.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1712,11 +1721,13 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 name = "reposcribe-ai"
 version = "0.1.0"
 dependencies = [
+ "ignore",
  "reposcribe-core",
  "reqwest",
  "secrecy",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror",
  "tokio",
  "wiremock",
@@ -1750,8 +1761,10 @@ dependencies = [
  "reposcribe-analyzers",
  "reposcribe-core",
  "reposcribe-render",
+ "serde_json",
  "tempfile",
  "tokio",
+ "wiremock",
 ]
 
 [[package]]
@@ -1769,6 +1782,7 @@ dependencies = [
 name = "reposcribe-render"
 version = "0.1.0"
 dependencies = [
+ "mermaid-svg",
  "reposcribe-core",
  "svg2pdf",
  "tempfile",

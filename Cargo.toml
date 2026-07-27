@@ -23,6 +23,7 @@ ignore = "0.4"
 indicatif = "0.18"
 inquire = "0.9"
 miette = { version = "7.6", features = ["fancy"] }
+mermaid-svg = "0.5"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 secrecy = "0.10"
 serde = { version = "1.0", features = ["derive"] }

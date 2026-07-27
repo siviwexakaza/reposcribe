@@ -11,6 +11,30 @@ pub struct DatabaseSchema {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepositoryDatabaseAnalysis {
+    pub projects: Vec<DatabaseProjectAnalysis>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DatabaseProjectAnalysis {
+    pub name: String,
+    pub root: PathBuf,
+    pub framework: Option<String>,
+    pub database_technology: Option<String>,
+    pub schema: DatabaseSchema,
+}
+
+impl std::fmt::Display for DatabaseProjectAnalysis {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{} · {}", self.name, self.root.display())?;
+        if let Some(database) = &self.database_technology {
+            write!(formatter, " · {database}")?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DatabaseEntity {
     pub name: String,
     pub fields: Vec<DatabaseField>,
@@ -46,11 +70,20 @@ pub enum Cardinality {
 }
 
 impl Cardinality {
-    pub const fn mermaid(self) -> &'static str {
+    pub const fn mermaid_left(self) -> &'static str {
+        match self {
+            Self::One => "||",
+            Self::ZeroOrOne => "|o",
+            Self::Many => "}|",
+            Self::ZeroOrMany => "}o",
+        }
+    }
+
+    pub const fn mermaid_right(self) -> &'static str {
         match self {
             Self::One => "||",
             Self::ZeroOrOne => "o|",
-            Self::Many => "}|",
+            Self::Many => "|{",
             Self::ZeroOrMany => "o{",
         }
     }

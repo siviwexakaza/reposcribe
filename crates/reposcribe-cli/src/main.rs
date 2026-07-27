@@ -6,12 +6,10 @@ use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use inquire::Select;
 use miette::{IntoDiagnostic, Result, WrapErr, miette};
 use reposcribe_ai::{AiClient, AiError, ProviderModel};
-use reposcribe_analyzers::{
-    DatabaseSource, discover_database_sources, find_repository_root, load_or_detect_project,
-    parse_database_source,
-};
+use reposcribe_analyzers::{find_repository_root, load_or_detect_project};
 use reposcribe_core::{
-    AiConfiguration, AiProvider, CacheState, ConfigStore, ModuleProfile, OutputFormat,
+    AiConfiguration, AiProvider, CacheState, ConfigStore, DatabaseProjectAnalysis, ModuleProfile,
+    OutputFormat,
 };
 
 #[derive(Debug, Parser)]
@@ -58,6 +56,9 @@ enum Command {
     Doctor,
     /// Generate an entity-relationship diagram from local database definition files.
     Erd {
+        /// Schema file or model directory containing the database definitions.
+        #[arg(long, value_name = "FILE_OR_DIRECTORY")]
+        source: PathBuf,
         /// Output type: pdf (default), html, or markdown.
         #[arg(long, default_value_t = OutputFormat::default(), value_name = "TYPE")]
         output: OutputFormat,
@@ -68,11 +69,35 @@ enum Command {
         #[arg(long, value_name = "NAME_OR_PATH")]
         project: Option<String>,
     },
+    /// Generate a control/data-flow diagram from a file, symbol, route, or feature.
+    Flow {
+        /// Starting file, symbol, class, function, route, endpoint, event, or feature.
+        #[arg(long, value_name = "ENTRY")]
+        entry: String,
+        /// Output type: pdf (default), html, or markdown.
+        #[arg(long, default_value_t = OutputFormat::default(), value_name = "TYPE")]
+        output: OutputFormat,
+        /// Destination path. The selected output extension is added automatically.
+        #[arg(long, value_name = "PATH")]
+        out: Option<PathBuf>,
+    },
     /// List text-generation models available for an AI provider.
     Models {
         /// Provider to query. Defaults to the configured provider.
         #[arg(long, value_name = "PROVIDER")]
         provider: Option<AiProvider>,
+    },
+    /// Generate a sequence diagram from a file, symbol, route, or feature.
+    Sequence {
+        /// Starting file, symbol, class, function, route, endpoint, event, or feature.
+        #[arg(long, value_name = "ENTRY")]
+        entry: String,
+        /// Output type: pdf (default), html, or markdown.
+        #[arg(long, default_value_t = OutputFormat::default(), value_name = "TYPE")]
+        output: OutputFormat,
+        /// Destination path. The selected output extension is added automatically.
+        #[arg(long, value_name = "PATH")]
+        out: Option<PathBuf>,
     },
     /// Detect and inspect the projects in the current repository.
     Project {
@@ -121,40 +146,43 @@ async fn main() -> Result<()> {
         },
         Command::Doctor => doctor(&cli),
         Command::Erd {
+            source,
             output,
             out,
             project,
-        } => generate_erd(&cli, *output, out.clone(), project.as_deref()),
+        } => generate_erd(&cli, source, *output, out.clone(), project.as_deref()).await,
+        Command::Flow { entry, output, out } => {
+            generate_flow(&cli, entry, *output, out.clone()).await
+        }
         Command::Models { provider } => list_models(&cli, *provider).await,
         Command::Project { command } => match command {
             ProjectCommand::Show => show_project(&cli, false),
             ProjectCommand::Refresh => show_project(&cli, true),
         },
+        Command::Sequence { entry, output, out } => {
+            generate_sequence(&cli, entry, *output, out.clone()).await
+        }
     }
 }
 
-fn generate_erd(
+async fn generate_erd(
     cli: &Cli,
+    source: &std::path::Path,
     output: OutputFormat,
     destination: Option<PathBuf>,
     project: Option<&str>,
 ) -> Result<()> {
     let root = repository_root(cli)?;
-    let detection_spinner = spinner("Finding database definitions", cli.quiet);
-    let outcome = load_or_detect_project(&root, false)
-        .map_err(|error| miette!("project detection failed: {error}"))?;
-    let sources = discover_database_sources(&outcome.profile)
-        .map_err(|error| miette!("database discovery failed: {error}"))?;
-    detection_spinner.finish_and_clear();
-
-    let source = select_database_source(sources, project)?;
-    let analysis_spinner = spinner(
-        &format!("Reading {} database definitions", source.kind),
-        cli.quiet,
-    );
-    let schema = parse_database_source(&root, &source)
-        .map_err(|error| miette!("could not understand the database definitions: {error}"))?;
+    let source = resolve_erd_source(&root, source)?;
+    let (ai, client) = configured_ai_client()?;
+    let analysis_spinner = spinner("AI is inspecting the repository", cli.quiet);
+    let analysis = client
+        .analyze_repository_database(&root, &ai.model, &source, project)
+        .await
+        .map_err(|error| friendly_ai_error(ai.provider, error))?;
     analysis_spinner.finish_and_clear();
+    let selected = select_database_project(analysis.projects, project)?;
+    let schema = selected.schema.clone();
 
     let destination = destination.unwrap_or_else(|| root.join("reposcribe-erd"));
     let render_spinner = spinner(&format!("Creating {output} diagram"), cli.quiet);
@@ -163,33 +191,137 @@ fn generate_erd(
     render_spinner.finish_and_clear();
 
     println!("{} ERD created", style("✓").green());
-    println!("  Project        {}", source.project_name);
-    println!("  Database       {}", source.kind);
+    println!("  Source         {}", source.display());
+    println!("  Project        {}", selected.name);
+    println!(
+        "  Framework      {}",
+        selected.framework.as_deref().unwrap_or("not identified")
+    );
+    println!(
+        "  Database       {}",
+        selected
+            .database_technology
+            .as_deref()
+            .unwrap_or("not identified")
+    );
     println!("  Entities       {}", schema.entities.len());
     println!("  Relationships  {}", schema.relationships.len());
     println!("  Output         {}", rendered.display());
     Ok(())
 }
 
-fn select_database_source(
-    sources: Vec<DatabaseSource>,
-    project: Option<&str>,
-) -> Result<DatabaseSource> {
-    if sources.is_empty() {
+fn resolve_erd_source(root: &std::path::Path, source: &std::path::Path) -> Result<PathBuf> {
+    let requested = if source.is_absolute() {
+        source.to_path_buf()
+    } else {
+        root.join(source)
+    };
+    let canonical = requested.canonicalize().map_err(|error| {
+        miette!(
+            help = "Pass an existing schema file or model directory, for example `--source src/db/schema.ts` or `--source app/models`.",
+            "could not access ERD source '{}': {error}",
+            source.display()
+        )
+    })?;
+    if !canonical.starts_with(root) {
         return Err(miette!(
-            help = "RepoScribe currently reads Prisma schema files and SQL schema/migration files. Support for more database definitions is being added incrementally.",
-            "no supported database definition files were found"
+            "ERD source '{}' must be inside the repository",
+            source.display()
         ));
     }
+    if !canonical.is_file() && !canonical.is_dir() {
+        return Err(miette!(
+            "ERD source '{}' is not a file or directory",
+            source.display()
+        ));
+    }
+    canonical
+        .strip_prefix(root)
+        .map(PathBuf::from)
+        .map_err(|_| miette!("could not resolve the ERD source inside the repository"))
+}
 
+async fn generate_sequence(
+    cli: &Cli,
+    entry: &str,
+    output: OutputFormat,
+    destination: Option<PathBuf>,
+) -> Result<()> {
+    let root = repository_root(cli)?;
+    let (ai, client) = configured_ai_client()?;
+    let analysis_spinner = spinner("AI is tracing the sequence", cli.quiet);
+    let diagram = client
+        .analyze_sequence_diagram(&root, &ai.model, entry)
+        .await
+        .map_err(|error| friendly_ai_error(ai.provider, error))?;
+    analysis_spinner.finish_and_clear();
+    let destination = destination.unwrap_or_else(|| root.join("reposcribe-sequence"));
+    let render_spinner = spinner(&format!("Creating {output} diagram"), cli.quiet);
+    let rendered = reposcribe_render::render_sequence(&diagram, output, &destination)
+        .map_err(|error| miette!("diagram generation failed: {error}"))?;
+    render_spinner.finish_and_clear();
+
+    println!("{} Sequence diagram created", style("✓").green());
+    println!("  Entry          {}", diagram.entry);
+    println!("  Mermaid lines  {}", diagram.mermaid.lines().count());
+    println!("  Sources        {}", diagram.source_files.len());
+    println!("  Output         {}", rendered.display());
+    Ok(())
+}
+
+async fn generate_flow(
+    cli: &Cli,
+    entry: &str,
+    output: OutputFormat,
+    destination: Option<PathBuf>,
+) -> Result<()> {
+    let root = repository_root(cli)?;
+    let (ai, client) = configured_ai_client()?;
+    let analysis_spinner = spinner("AI is tracing the flow", cli.quiet);
+    let diagram = client
+        .analyze_flow_diagram(&root, &ai.model, entry)
+        .await
+        .map_err(|error| friendly_ai_error(ai.provider, error))?;
+    analysis_spinner.finish_and_clear();
+    let destination = destination.unwrap_or_else(|| root.join("reposcribe-flow"));
+    let render_spinner = spinner(&format!("Creating {output} diagram"), cli.quiet);
+    let rendered = reposcribe_render::render_flow(&diagram, output, &destination)
+        .map_err(|error| miette!("diagram generation failed: {error}"))?;
+    render_spinner.finish_and_clear();
+
+    println!("{} Flow diagram created", style("✓").green());
+    println!("  Entry          {}", diagram.entry);
+    println!("  Mermaid lines  {}", diagram.mermaid.lines().count());
+    println!("  Sources        {}", diagram.source_files.len());
+    println!("  Output         {}", rendered.display());
+    Ok(())
+}
+
+fn configured_ai_client() -> Result<(AiConfiguration, AiClient)> {
+    let store = ConfigStore::discover().map_err(|error| miette!("{error}"))?;
+    let configuration = store.load().map_err(|error| miette!("{error}"))?;
+    let ai = configuration.ai.ok_or_else(|| {
+        miette!(
+            help = "Run `reposcribe config ai` to select Anthropic or OpenAI and a model.",
+            "an AI provider is required to inspect the repository"
+        )
+    })?;
+    let client = client_from_environment(ai.provider)?;
+    Ok((ai, client))
+}
+
+fn select_database_project(
+    projects: Vec<DatabaseProjectAnalysis>,
+    project: Option<&str>,
+) -> Result<DatabaseProjectAnalysis> {
     if let Some(query) = project {
         let normalized = query.trim().trim_matches('/').to_ascii_lowercase();
-        let mut matches: Vec<DatabaseSource> = sources
+        let mut matches: Vec<DatabaseProjectAnalysis> = projects
             .into_iter()
-            .filter(|source| {
-                source.project_name.eq_ignore_ascii_case(&normalized)
-                    || source
-                        .project_root
+            .filter(|candidate| {
+                candidate.name.eq_ignore_ascii_case(&normalized)
+                    || candidate
+                        .root
                         .to_string_lossy()
                         .trim_matches('/')
                         .eq_ignore_ascii_case(&normalized)
@@ -208,13 +340,13 @@ fn select_database_source(
         };
     }
 
-    if sources.len() == 1 {
-        return Ok(sources.into_iter().next().expect("one source exists"));
+    if projects.len() == 1 {
+        return Ok(projects.into_iter().next().expect("one project exists"));
     }
     require_interactive(
         "Multiple databases were found. Pass --project <name-or-path> when running non-interactively.",
     )?;
-    Select::new("Select a database to diagram:", sources)
+    Select::new("Select a project database to diagram:", projects)
         .with_page_size(12)
         .prompt()
         .map_err(|error| miette!("database selection was cancelled: {error}"))

@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+mermaid-svg.workspace = true
 reposcribe-core = { path = "../reposcribe-core" }
 svg2pdf.workspace = true
 thiserror.workspace = true

@@ -6,6 +6,8 @@ use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
 use thiserror::Error;
 
+mod repository;
+
 const OPENAI_API_BASE: &str = "https://api.openai.com";
 const ANTHROPIC_API_BASE: &str = "https://api.anthropic.com";
 const ANTHROPIC_API_VERSION: &str = "2023-06-01";
@@ -47,7 +49,15 @@ impl AiClient {
                 environment_variable: variable,
             });
         }
-        Ok(Self::new(provider, SecretString::from(value)))
+        let client = Self::new(provider, SecretString::from(value));
+        let base_variable = match provider {
+            AiProvider::Anthropic => "ANTHROPIC_BASE_URL",
+            AiProvider::OpenAi => "OPENAI_BASE_URL",
+        };
+        Ok(match env::var(base_variable) {
+            Ok(base_url) if !base_url.trim().is_empty() => client.with_base_url(base_url),
+            _ => client,
+        })
     }
 
     pub fn new(provider: AiProvider, api_key: SecretString) -> Self {
@@ -210,6 +220,26 @@ pub enum AiError {
     },
     #[error("{0} did not return any compatible text-generation models")]
     NoCompatibleModels(AiProvider),
+    #[error("could not access repository path '{}': {source}", path.display())]
+    RepositoryAccess {
+        path: std::path::PathBuf,
+        source: std::io::Error,
+    },
+    #[error("'{}' is not a readable repository directory", .0.display())]
+    InvalidRepositoryPath(std::path::PathBuf),
+    #[error("the AI requested an unsafe or protected repository path: {0}")]
+    UnsafeRepositoryPath(String),
+    #[error("{provider} returned an invalid repository-analysis response: {message}")]
+    InvalidAgentResponse {
+        provider: AiProvider,
+        message: String,
+    },
+    #[error("the AI exceeded the repository inspection limit of {0} rounds")]
+    AgentToolLimit(usize),
+    #[error("the AI database analysis was invalid: {0}")]
+    InvalidDatabaseAnalysis(String),
+    #[error("the AI diagram analysis was invalid: {0}")]
+    InvalidDiagramAnalysis(String),
 }
 
 #[cfg(test)]
